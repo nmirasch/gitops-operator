@@ -172,6 +172,54 @@ func getArgoApplicationControllerResources(cr *argoproj.ArgoCD) corev1.ResourceR
 	return resources
 }
 
+// getArgoApplicationControllerGoRuntimeEnv returns Go runtime tuning environment variables (currently just
+// GOMEMLIMIT) for the Argo CD application controller container.
+//
+// The application controller keeps an in-memory cache of the full state of every resource it manages, so its
+// memory footprint scales with the size of the managed resource inventory. Left to its own devices, the Go
+// garbage collector targets a heap size relative to live memory usage and has no awareness of the container's
+// memory limit, which means the controller can be OOMKilled shortly after crossing
+// .Spec.Controller.Resources.Limits.memory even though the Go runtime "thinks" it still has room to grow.
+//
+// To reduce the likelihood of OOMKills, when a memory limit is configured for the controller container, this
+// function derives a soft memory limit for the Go runtime (GOMEMLIMIT) that is set to a percentage
+// (common.ArgoCDDefaultControllerMemLimitPercent) of that hard limit. This gives the garbage collector a target
+// below the container's hard memory limit, so that it can proactively free memory before the kubelet/kernel
+// intervenes (e.g. via an OOMKill).
+//
+// This behavior is enabled by default. It can be disabled cluster-wide (for every ArgoCD instance managed by this
+// operator) by setting the operator process's own ENABLE_APPLICATION_CONTROLLER_GO_RUNTIME_TUNING environment
+// variable to "false" (see common.EnableApplicationControllerGoRuntimeTuning). This is an operator-level (not
+// per-CR) kill switch.
+func getArgoApplicationControllerGoRuntimeEnv(cr *argoproj.ArgoCD) []corev1.EnvVar {
+	env := make([]corev1.EnvVar, 0)
+
+	// Default-on: only skip Go runtime tuning if it has been explicitly disabled on the operator.
+	if os.Getenv(common.EnableApplicationControllerGoRuntimeTuning) == "false" {
+		return env
+	}
+
+	resources := getArgoApplicationControllerResources(cr)
+	memLimit := resources.Limits.Memory()
+	if memLimit == nil || memLimit.IsZero() {
+		// Without a configured memory limit there is no sensible ceiling to derive a soft memory limit from, so
+		// leave the Go runtime's default GC behavior untouched.
+		return env
+	}
+
+	goMemLimitBytes := memLimit.Value() * int64(common.ArgoCDDefaultControllerMemLimitPercent) / 100
+	if goMemLimitBytes <= 0 {
+		return env
+	}
+
+	env = append(env, corev1.EnvVar{
+		Name:  "GOMEMLIMIT",
+		Value: fmt.Sprintf("%d", goMemLimitBytes),
+	})
+
+	return env
+}
+
 // getArgoApplicationControllerCommand will return the command for the ArgoCD Application Controller component.
 func getArgoApplicationControllerCommand(cr *argoproj.ArgoCD, useTLSForRedis bool) []string {
 	allowed := argoutil.IsNamespaceClusterConfigNamespace(cr.Namespace)

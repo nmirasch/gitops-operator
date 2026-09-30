@@ -3,6 +3,7 @@ package argocd
 import (
 	"context"
 	"fmt"
+	"os"
 	"reflect"
 	"testing"
 	"time"
@@ -939,6 +940,54 @@ func TestReconcileAppController_Initcontainer(t *testing.T) {
 		ss))
 
 	assert.Equal(t, 0, len(ss.Spec.Template.Spec.InitContainers))
+}
+
+func TestReconcileAppController_GoRuntimeEnv(t *testing.T) {
+	a := makeTestArgoCD(func(a *argoproj.ArgoCD) {
+		a.Spec.Controller.Resources = &corev1.ResourceRequirements{
+			Limits: corev1.ResourceList{
+				corev1.ResourceMemory: resourcev1.MustParse("2000Mi"),
+			},
+		}
+	})
+
+	resObjs := []client.Object{a}
+	subresObjs := []client.Object{a}
+	runtimeObjs := []runtime.Object{}
+	sch := makeTestReconcilerScheme(argoproj.AddToScheme, promoter.AddToScheme)
+	cl := makeTestReconcilerClient(sch, resObjs, subresObjs, runtimeObjs)
+	r := makeTestReconciler(cl, sch, testclient.NewSimpleClientset())
+
+	getControllerEnv := func() []corev1.EnvVar {
+		ss := &appsv1.StatefulSet{}
+		assert.NoError(t, r.Get(
+			context.TODO(),
+			types.NamespacedName{
+				Name:      applicationControllerResourceName(a),
+				Namespace: a.Namespace,
+			},
+			ss))
+		return ss.Spec.Template.Spec.Containers[0].Env
+	}
+
+	// Go runtime tuning is enabled by default: GOMEMLIMIT should be derived from the memory limit.
+	assert.NoError(t, r.reconcileApplicationControllerStatefulSet(a, false))
+	assert.Contains(t, getControllerEnv(), corev1.EnvVar{Name: "GOMEMLIMIT", Value: "1887436800"}) // 2000Mi * 90 / 100, in bytes
+
+	// A user-specified value in .Spec.Controller.Env should always win over the derived value.
+	a.Spec.Controller.Env = []corev1.EnvVar{{Name: "GOMEMLIMIT", Value: "999999999"}}
+	assert.NoError(t, r.reconcileApplicationControllerStatefulSet(a, false))
+	assert.Contains(t, getControllerEnv(), corev1.EnvVar{Name: "GOMEMLIMIT", Value: "999999999"})
+
+	// Disabling the feature at the operator level should remove the derived GOMEMLIMIT.
+	a.Spec.Controller.Env = nil
+	os.Setenv(common.EnableApplicationControllerGoRuntimeTuning, "false")
+	defer os.Unsetenv(common.EnableApplicationControllerGoRuntimeTuning)
+
+	assert.NoError(t, r.reconcileApplicationControllerStatefulSet(a, false))
+	for _, e := range getControllerEnv() {
+		assert.NotEqual(t, "GOMEMLIMIT", e.Name, "GOMEMLIMIT should not be set when the feature is disabled at the operator level")
+	}
 }
 
 func TestReconcileArgoCD_sidecarcontainer(t *testing.T) {

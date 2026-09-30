@@ -3,6 +3,7 @@ package argocd
 import (
 	"context"
 	b64 "encoding/base64"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -17,6 +18,7 @@ import (
 	"github.com/argoproj-labs/gitops-operator/argocd-operator/controllers/argoutil"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	testclient "k8s.io/client-go/kubernetes/fake"
@@ -662,6 +664,70 @@ func TestGetArgoApplicationContainerEnv(t *testing.T) {
 		if !reflect.DeepEqual(env, tt.want) {
 			t.Fatalf("got %#v, want %#v", env, tt.want)
 		}
+	}
+}
+
+func controllerMemLimit(memLimit string) argoCDOpt {
+	return func(a *argoproj.ArgoCD) {
+		if a.Spec.Controller.Resources == nil {
+			a.Spec.Controller.Resources = &corev1.ResourceRequirements{}
+		}
+		if a.Spec.Controller.Resources.Limits == nil {
+			a.Spec.Controller.Resources.Limits = corev1.ResourceList{}
+		}
+		a.Spec.Controller.Resources.Limits[corev1.ResourceMemory] = resource.MustParse(memLimit)
+	}
+}
+
+func TestGetArgoApplicationControllerGoRuntimeEnv(t *testing.T) {
+	tests := []struct {
+		name        string
+		opts        []argoCDOpt
+		envVarValue string // value of common.EnableApplicationControllerGoRuntimeTuning to set for the test, "" to unset
+		want        []corev1.EnvVar
+	}{
+		{
+			name: "no memory limit configured: no GOMEMLIMIT is set, even though feature is enabled by default",
+			opts: nil,
+			want: []corev1.EnvVar{},
+		},
+		{
+			name: "memory limit configured: GOMEMLIMIT is derived as a percentage of the memory limit",
+			opts: []argoCDOpt{controllerMemLimit("2000Mi")},
+			want: []corev1.EnvVar{
+				{Name: "GOMEMLIMIT", Value: "1887436800"}, // 2000Mi * 90 / 100, in bytes
+			},
+		},
+		{
+			name:        "feature explicitly disabled via operator env var: no GOMEMLIMIT is set, even with a memory limit configured",
+			opts:        []argoCDOpt{controllerMemLimit("2000Mi")},
+			envVarValue: "false",
+			want:        []corev1.EnvVar{},
+		},
+		{
+			name:        "feature explicitly enabled via operator env var (non-'false' value): behaves the same as default-on",
+			opts:        []argoCDOpt{controllerMemLimit("2000Mi")},
+			envVarValue: "true",
+			want: []corev1.EnvVar{
+				{Name: "GOMEMLIMIT", Value: "1887436800"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.envVarValue != "" {
+				os.Setenv(common.EnableApplicationControllerGoRuntimeTuning, tt.envVarValue)
+				defer os.Unsetenv(common.EnableApplicationControllerGoRuntimeTuning)
+			}
+
+			cr := makeTestArgoCD(tt.opts...)
+			env := getArgoApplicationControllerGoRuntimeEnv(cr)
+
+			if !reflect.DeepEqual(env, tt.want) {
+				t.Fatalf("got %#v, want %#v", env, tt.want)
+			}
+		})
 	}
 }
 
