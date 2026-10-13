@@ -294,6 +294,14 @@ const (
 	// the Namespace Management feature is enabled.
 	EnableManagedNamespace = "ALLOW_NAMESPACE_MANAGEMENT_IN_NAMESPACE_SCOPED_INSTANCES"
 
+	// EnableApplicationControllerGoRuntimeTuning is an environment variable (read from the operator process's own
+	// environment, not from the ArgoCD CR) that controls whether the operator will automatically tune the Go
+	// runtime of the Argo CD application controller container (e.g. by setting GOMEMLIMIT based on the
+	// container's configured memory limit). This feature is enabled by default; set this variable to "false" on
+	// the operator Deployment/Subscription to disable it cluster-wide, for every ArgoCD instance managed by this
+	// operator.
+	EnableApplicationControllerGoRuntimeTuning = "ENABLE_APPLICATION_CONTROLLER_GO_RUNTIME_TUNING"
+
 	// ArgoCDImageUpdaterImageEnvName is the environment variable used to get the image
 	// to used for the Image Updater container.
 	ArgoCDImageUpdaterImageEnvName = "ARGOCD_IMAGE_UPDATER_IMAGE"

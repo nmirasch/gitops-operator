@@ -27,6 +27,17 @@ const (
 	// ArgoCDApplicationControllerDefaultShardReplicas is the default number of replicas that the ArgoCD Application Controller Should Use
 	ArgocdApplicationControllerDefaultReplicas = 1
 
+	// ArgoCDDefaultControllerMemLimitPercent is the default percentage of the Argo CD application controller
+	// container's configured memory limit that is used to derive a Go runtime soft memory limit (GOMEMLIMIT),
+	// when Go runtime tuning is enabled. See EnableApplicationControllerGoRuntimeTuning.
+	ArgoCDDefaultControllerMemLimitPercent = 90
+
+	// ArgoCDDefaultControllerCPULimitPercent is the default percentage of the Argo CD application controller
+	// container's configured CPU limit that is used to derive the Go runtime max CPU constraint (GOMAXPROCS),
+	// when Go runtime tuning is enabled. Defaults to 100 (use the full CPU limit) unless overridden per-instance
+	// via .Spec.Controller.GoRuntime.CPULimitPercent. See EnableApplicationControllerGoRuntimeTuning.
+	ArgoCDDefaultControllerCPULimitPercent = 100
+
 	// ArgoCDDefaultLogLevel is the default log level to be used by all ArgoCD components.
 	ArgoCDDefaultLogLevel = "info"
 

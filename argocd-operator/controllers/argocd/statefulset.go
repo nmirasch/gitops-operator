@@ -683,6 +683,10 @@ func (r *ReconcileArgoCD) reconcileApplicationControllerStatefulSet(cr *argoproj
 	// Let user specify their own environment first
 	controllerEnv = argoutil.EnvMerge(controllerEnv, proxyEnvVars(), false)
 	controllerEnv = argoutil.EnvMerge(controllerEnv, argoutil.GetRedisAuthEnv(), false)
+	// Go runtime tuning (e.g. GOMEMLIMIT) is derived from the controller's resource limits, but cr.Spec.Controller.Env
+	// always wins: if the user has already set GOMEMLIMIT (or another Go runtime env var) via .Spec.Controller.Env,
+	// that value is preserved as-is.
+	controllerEnv = argoutil.EnvMerge(controllerEnv, getArgoApplicationControllerGoRuntimeEnv(cr), false)
 
 	if cr.Spec.Controller.InitContainers != nil {
 		ss.Spec.Template.Spec.InitContainers = append(ss.Spec.Template.Spec.InitContainers, cr.Spec.Controller.InitContainers...)
